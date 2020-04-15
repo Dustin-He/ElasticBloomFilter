@@ -15,10 +15,10 @@ using namespace std;
 
 extern uint32_t total_slot;
 
-class bloom_filter {
+class Ebloom_filter {
 	public:
-		bloom_filter(uint32_t size, int hash_num);
-		~bloom_filter();
+		Ebloom_filter(uint32_t size, int hash_num);
+		~Ebloom_filter();
 		int insert(uint32_t key);
 		bool query(uint32_t key);
 		void expand();
@@ -43,8 +43,8 @@ class bloom_filter {
 };
 
 
-/*构造*/
-bloom_filter::bloom_filter(uint32_t sz, int hash_num) {
+/*build the EBF*/
+Ebloom_filter::Ebloom_filter(uint32_t sz, int hash_num) {
 	assert(hash_num > 0);
 	assert(sz < MAX_SIZE && sz > MIN_SIZE);
 
@@ -71,11 +71,11 @@ bloom_filter::bloom_filter(uint32_t sz, int hash_num) {
 		j++;
 	}
 	total_slot = sum * BUCKET_SIZE;
-	cout << "Total slot: " << total_slot << endl;
+	//cout << "Total slot: " << total_slot << endl;
 }
 
 /*to free a class*/
-bloom_filter::~bloom_filter() {
+Ebloom_filter::~Ebloom_filter() {
 	if (bloom_arr != NULL) {
 		delete []bloom_arr;
 	}
@@ -90,7 +90,7 @@ bloom_filter::~bloom_filter() {
 }
 
 
-int bloom_filter::insert_finger(uint32_t pos, uint32_t key) {
+int Ebloom_filter::insert_finger(uint32_t pos, uint32_t key) {
 	int j = 0;
 	while (j < LAYERS) {
 		if (finger_buckets[j][pos]->size() < BUCKET_SIZE) {
@@ -108,7 +108,7 @@ int bloom_filter::insert_finger(uint32_t pos, uint32_t key) {
 }
 
 /*Insertion*/
-int bloom_filter::insert(uint32_t key) {
+int Ebloom_filter::insert(uint32_t key) {
 	int hash_num = HashFunList.size();
 	for (int i = 0; i < hash_num; ++i) {
 		uint32_t pos = HashFunList[i]->run((const char *)&key, KEY_LEN);
@@ -125,16 +125,17 @@ int bloom_filter::insert(uint32_t key) {
 	}
 	/* This is the expanding operation. It can be commented when testing the insertion speed. */
 	
-	if ((double)_1_num / (double)size >= EXPAND_THRESHOLD) {
-		cout << (double)_1_num / (double)size << endl;
+	if ((double)_1_num / (double)size >= EXPAND_THRESHOLD && expandOrNot) {
+		//cout << (double)_1_num / (double)size << endl;
 		expand();
+		return -1;
 	}
 	
 	return 1;
 }
 
 /*Query*/
-bool bloom_filter::query(uint32_t key) {
+bool Ebloom_filter::query(uint32_t key) {
 	int hash_num = HashFunList.size();
 	for (int i = 0; i < hash_num; ++i) {
 		uint32_t pos = HashFunList[i]->run((const char *)&key, KEY_LEN);
@@ -146,19 +147,19 @@ bool bloom_filter::query(uint32_t key) {
 }
 
 /*Set one bit*/
-inline void bloom_filter::setbit(uint32_t pos) {
+inline void Ebloom_filter::setbit(uint32_t pos) {
 	bloom_arr[pos >> SHIFT] |= (1 << (pos & MASK));
 }
 
 /*Get the value of one bit*/
-inline bool bloom_filter::getbit(uint32_t pos) {
+inline bool Ebloom_filter::getbit(uint32_t pos) {
 	if (bloom_arr[pos >> SHIFT] & (1 << (pos & MASK)))
 		return true;
 	return false;
 }
 
 /*Expand the buckets*/
-void bloom_filter::expand() {
+void Ebloom_filter::expand() {
 	assert((MAX_SIZE - finger_length + 1) > MIN_SIZE && (finger_length - 1) > 0);
 
 	/*change the parameters*/
@@ -240,12 +241,12 @@ void bloom_filter::expand() {
 
 
 /* get the compression */
-inline int bloom_filter::get_compression() {
+inline int Ebloom_filter::get_compression() {
 	return compression;
 }
 
 /* get the number of 0 bits */
-inline uint32_t bloom_filter::get_0_num() {
+inline uint32_t Ebloom_filter::get_0_num() {
 	uint32_t ans = 0;
 	for (int i = 0; i < size; ++i) {
 		if (!getbit(i)) ++ans;
@@ -254,12 +255,12 @@ inline uint32_t bloom_filter::get_0_num() {
 }
 
 /* get the number of set bits */
-inline uint32_t bloom_filter::get_1_num() {
+inline uint32_t Ebloom_filter::get_1_num() {
 	return _1_num;
 }
 
 /* get the size of bitmap */
-inline uint32_t bloom_filter::get_size() {
+inline uint32_t Ebloom_filter::get_size() {
 	return size;
 }
 

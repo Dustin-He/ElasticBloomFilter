@@ -1,27 +1,29 @@
 #ifndef _PARAM_H
 #define _PARAM_H
 
+#include <stdint.h>
+
 #define BYTE_SIZE 8
-#define SHIFT 3					//移位
-#define MASK 0x7				//掩码
-#define KEY_LEN 4				//key的字节数
-#define MAX_SIZE 32				//bits最长长度
-#define MIN_SIZE 3				//bits最短长度
-#define MAX_UINT32_T 0xFFFFFFFF	//无符号数最大值
+#define SHIFT 3					//a shift
+#define MASK 0x7				//a mask
+#define KEY_LEN 4				//length of the key(bytes)
+#define MAX_SIZE 32				//maximum length of the bits array(2^MAX_SIZE)
+#define MIN_SIZE 3				//minimum length of the bits array(2^MIN_SIZE)
+#define MAX_UINT32_T 0xFFFFFFFF	//maximum value of type uint32_t
 #define MAX_UINT16_T 0xFFFF
-#define BUCKET_SIZE 8			//桶内元素个数
-#define SEARCH_RANGE 32			//找空桶的范围
-#define EXPAND_THRESHOLD 0.2	//1的个数达到此比例则扩大
+#define BUCKET_SIZE 8			//number of elements in one bucket
+#define SEARCH_RANGE 32			//range for serching a empty bucket
+#define EXPAND_THRESHOLD 0.2	//expand when the _1_rate reaches it
 
-#define HASH_NUM 5				//哈希函数个数
-#define BLOOM_SIZE 18			//bits长度
+#define HASH_NUM 5				//number of hash functions
+#define BLOOM_SIZE 20			//length of the bits array
+#define CBF_SIZE 22				//length of the CBF
 
-//#define DataNum 20000			//数据规模
+#define LAYERS 2				//the number of layers of a bucket tree
+#define BRANCH 3				//the number of branches of a bucket tree
+#define BSHIFT 2				//a shift for calculating the position in a bucket tree
 
-#define LAYERS 1
-#define BRANCH 3
-#define BSHIFT 2
-
-uint32_t total_slot;
+uint32_t total_slot;			//total number of element slots
+bool expandOrNot;				//whether to expand
 
 #endif
