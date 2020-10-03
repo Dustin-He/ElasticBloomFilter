@@ -48,7 +48,7 @@ class ScalableBF
 		{
 			w++;
 			b[w] = new BF(m + w);
-			c* = 0.9;
+			c *= 0.9;
 		}
 		for(int i = 0; i < HASH_NUM; i++)
 		{

@@ -1,0 +1,6 @@
+expand times	items inserted	ebf		cbf
+0				0				1.38	8
+1				2925			2.58	8
+2				5840			4.83	8
+3				11692			9.00	8
+4				23416			16.67	8

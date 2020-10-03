@@ -10,6 +10,7 @@
 #include <cstring>
 #include <iostream>
 #include <string>
+#include <algorithm>
 
 using namespace std;
 
@@ -20,8 +21,12 @@ class Ebloom_filter {
 		Ebloom_filter(uint32_t size, int hash_num);
 		~Ebloom_filter();
 		int insert(uint32_t key);
+		int insert(char *key);
 		bool query(uint32_t key);
+		bool query(char *key);
 		void expand();
+		void deleteEle(uint32_t key);
+		void deleteEle(char *key);
 		inline int get_compression();
 		inline uint32_t get_0_num();
 		inline uint32_t get_size();
@@ -39,6 +44,7 @@ class Ebloom_filter {
 		vector<vector<uint32_t>*> finger_buckets[LAYERS];	//to simulate finger buckets in slow memory
 		inline bool getbit(uint32_t pos);					//get a bit in the bit map
 		inline void setbit(uint32_t pos);					//set a bit in the bit map
+		inline void resetbit(uint32_t pos);
 		int insert_finger(uint32_t pos, uint32_t key);		//to be called when inserting a fingerprint
 };
 
@@ -63,7 +69,7 @@ Ebloom_filter::Ebloom_filter(uint32_t sz, int hash_num) {
 	uint32_t end = size;
 	int j = 0;
 	while (j < LAYERS) {
-		sum += end;
+		sum += end * (32 - sz + j * BSHIFT);
 		for (int i = 0; i < end; ++i) {
 			finger_buckets[j].push_back(new vector<uint32_t>());
 		}
@@ -71,7 +77,7 @@ Ebloom_filter::Ebloom_filter(uint32_t sz, int hash_num) {
 		j++;
 	}
 	total_slot = sum * BUCKET_SIZE;
-	//cout << "Total slot: " << total_slot << endl;
+	cout << "Total memory: " << total_slot / (double)(1 << 23) << endl;
 }
 
 /*to free a class*/
@@ -103,7 +109,7 @@ int Ebloom_filter::insert_finger(uint32_t pos, uint32_t key) {
 		j++;
 	}
 	if (j == LAYERS)
-		printf("Insert Error in bf!\n");
+		printf("Insertion Error in bf!\n");
 	return LAYERS;
 }
 
@@ -112,6 +118,32 @@ int Ebloom_filter::insert(uint32_t key) {
 	int hash_num = HashFunList.size();
 	for (int i = 0; i < hash_num; ++i) {
 		uint32_t pos = HashFunList[i]->run((const char *)&key, KEY_LEN);
+		if (!getbit(pos % size)) {
+			setbit(pos % size);
+			/* this is for the experiment, it can be commented when not needed. */
+			++_1_num;
+		}
+		int ans;
+		if ((ans = insert_finger(pos % size, pos / size)) == LAYERS) {
+			return 0;
+		}
+		
+	}
+	/* This is the expanding operation. It can be commented when testing the insertion speed. */
+	
+	if ((double)_1_num / (double)size >= EXPAND_THRESHOLD && expandOrNot) {
+		//cout << (double)_1_num / (double)size << endl;
+		expand();
+		return -1;
+	}
+	
+	return 1;
+}
+
+int Ebloom_filter::insert(char *key) {
+	int hash_num = HashFunList.size();
+	for (int i = 0; i < hash_num; ++i) {
+		uint32_t pos = HashFunList[i]->run((const char *)key, KEY_LEN2);
 		if (!getbit(pos % size)) {
 			setbit(pos % size);
 			/* this is for the experiment, it can be commented when not needed. */
@@ -146,9 +178,149 @@ bool Ebloom_filter::query(uint32_t key) {
 	return true;
 }
 
+bool Ebloom_filter::query(char *key) {
+	int hash_num = HashFunList.size();
+	for (int i = 0; i < hash_num; ++i) {
+		uint32_t pos = HashFunList[i]->run((const char *)key, KEY_LEN2);
+		if (!getbit(pos % size)) {
+			return false;
+		}
+	}
+	return true;
+}
+
+// void Ebloom_filter::deleteEle(uint32_t key) {	
+// 	int hash_num = HashFunList.size();
+// 	for (int i = 0; i < hash_num; ++i) {
+// 		uint32_t pos = HashFunList[i]->run((const char *)&key, KEY_LEN);
+// 		uint32_t fingerprint = pos / size;
+// 		pos %= size;
+// 		if (!getbit(pos)) {
+// 			printf("The element doesn't exist!\n");
+// 			return;
+// 		}
+// 		int j = 0;
+// 		uint32_t tmpPos2 = pos;
+// 		uint32_t tmpPos = pos / BRANCH;
+// 		uint32_t tmpfinger = pos % BRANCH;
+// 		uint32_t mask = (1 << BSHIFT) - 1;
+// 		while (j < LAYERS) {
+// 			vector<uint32_t>::iterator iter = find(finger_buckets[j][pos]->begin(), finger_buckets[j][pos]->end(), fingerprint);
+// 			if (iter != finger_buckets[j][pos]->end()){
+// 				finger_buckets[j][pos]->erase(iter);
+// 				if (!finger_buckets[0][tmpPos2]->empty()) {
+// 					return;
+// 				}
+// 				for (int k = 1; k < LAYERS; ++k){
+// 					for (iter = finger_buckets[k][tmpPos]->begin(); iter != finger_buckets[k][tmpPos]->end(); iter++) {
+// 						uint32_t tmp = *iter;
+// 						if ((*iter) & mask == tmpfinger) return;
+// 					}
+// 					tmpfinger = (tmpfinger << BSHIFT) | (tmpPos % BRANCH);
+// 					tmpPos /= BRANCH;
+// 					mask = (mask << BSHIFT) | ((1 << BSHIFT) - 1);
+// 				}
+// 				resetbit(tmpPos2);
+// 				return;
+// 			}
+// 			/* We need one or several bits to record the bucket's path to the root */
+// 			fingerprint = (fingerprint << BSHIFT) | (pos % BRANCH);
+// 			pos /= BRANCH;
+// 			j++;
+// 		}
+// 		if (j == LAYERS)
+// 			printf("Deletion Error in bf!\n");
+// 	}
+// }
+
+
+void Ebloom_filter::deleteEle(uint32_t key) {	
+	int hash_num = HashFunList.size();
+	for (int i = 0; i < hash_num; ++i) {
+		uint32_t pos = HashFunList[i]->run((const char *)&key, KEY_LEN);
+		uint32_t fingerprint = pos / size;
+		pos %= size;
+		if (!getbit(pos)) {
+			printf("The element doesn't exist!\n");
+			return;
+		}
+		int j = 0;
+		uint32_t tmpPos = pos;
+		uint32_t mask = (1 << BSHIFT) - 1;
+		while (j < LAYERS) {
+			vector<uint32_t>::iterator iter = find(finger_buckets[j][pos]->begin(), finger_buckets[j][pos]->end(), fingerprint);
+			if (iter != finger_buckets[j][pos]->end()){
+				finger_buckets[j][pos]->erase(iter);
+				for (int k = j + 1; k < LAYERS; ++k) {
+					for (iter = finger_buckets[k][pos/BRANCH]->begin(); iter != finger_buckets[k][pos/BRANCH]->end(); ++iter) {
+						if ((*iter) & mask == pos % BRANCH) {
+							finger_buckets[k - 1][pos]->push_back(*iter);
+							finger_buckets[k][pos/BRANCH]->erase(iter);
+						}
+					}
+					pos /=BRANCH;
+				}
+				if (finger_buckets[0][tmpPos]->empty())
+					resetbit(tmpPos);
+				return;
+			}
+			/* We need one or several bits to record the bucket's path to the root */
+			fingerprint = (fingerprint << BSHIFT) | (pos % BRANCH);
+			pos /= BRANCH;
+			j++;
+		}
+		if (j == LAYERS)
+			printf("Deletion Error in bf!\n");
+	}
+}
+
+void Ebloom_filter::deleteEle(char *key) {
+	int hash_num = HashFunList.size();
+	for (int i = 0; i < hash_num; ++i) {
+		uint32_t pos = HashFunList[i]->run((const char *)key, KEY_LEN2);
+		uint32_t fingerprint = pos / size;
+		pos %= size;
+		if (!getbit(pos)) {
+			printf("The element doesn't exist!\n");
+			return;
+		}
+		int j = 0;
+		uint32_t tmpPos = pos;
+		uint32_t mask = (1 << BSHIFT) - 1;
+		while (j < LAYERS) {
+			vector<uint32_t>::iterator iter = find(finger_buckets[j][pos]->begin(), finger_buckets[j][pos]->end(), fingerprint);
+			if (iter != finger_buckets[j][pos]->end()){
+				finger_buckets[j][pos]->erase(iter);
+				for (int k = j + 1; k < LAYERS; ++k) {
+					for (iter = finger_buckets[k][pos/BRANCH]->begin(); iter != finger_buckets[k][pos/BRANCH]->end(); ++iter) {
+						if ((*iter) & mask == pos % BRANCH) {
+							finger_buckets[k - 1][pos]->push_back(*iter);
+							finger_buckets[k][pos/BRANCH]->erase(iter);
+						}
+					}
+					pos /=BRANCH;
+				}
+				if (finger_buckets[0][tmpPos]->empty())
+					resetbit(tmpPos);
+				return;
+			}
+			/* We need one or several bits to record the bucket's path to the root */
+			fingerprint = (fingerprint << BSHIFT) | (pos % BRANCH);
+			pos /= BRANCH;
+			j++;
+		}
+		if (j == LAYERS)
+			printf("Deletion Error in bf!\n");
+	}
+}
+
 /*Set one bit*/
 inline void Ebloom_filter::setbit(uint32_t pos) {
 	bloom_arr[pos >> SHIFT] |= (1 << (pos & MASK));
+}
+
+inline void Ebloom_filter::resetbit(uint32_t pos) {
+	bloom_arr[pos >> SHIFT] &= ~(1 << (pos & MASK));
 }
 
 /*Get the value of one bit*/

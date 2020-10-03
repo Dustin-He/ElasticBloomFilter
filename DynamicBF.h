@@ -11,17 +11,17 @@
 
 using namespace std;
 
-class BF
+class BFint
 {
 	public:
-	bool* c;
+	int* c;
 	int num;
-	BF() {};
-	BF(int m)
+	BFint() {};
+	BFint(int m)
 	{
 		num = 0;
-		c = new bool[1<<m];
-		memset(c, 0, 1<<m);
+		c = new int[1<<m];
+		memset(c, 0, sizeof(int) * (1<<m));
 	}
 };
 class DynamicBF
@@ -30,7 +30,7 @@ class DynamicBF
 	BOBHash32 * bobhash[HASH_NUM + 2];
 	int w, m, maxn;
 	double c;
-	BF* b[1010];
+	BFint* b[1010];
 	DynamicBF(){};
 	DynamicBF(int _m,double _c)
 	{
@@ -39,7 +39,7 @@ class DynamicBF
 		c = _c;
 		maxn = c * (1<<m);
 		memset(b, 0, sizeof(b));
-		b[0] = new BF(m);
+		b[0] = new BFint(m);
 		for(int i = 0; i < HASH_NUM; i++)
 			bobhash[i] = new BOBHash32(i + 1005);
 	}
@@ -47,17 +47,34 @@ class DynamicBF
 	{
 		bool f = false;
 		if(b[w]->num >= maxn)
-			b[++w] = new BF(m);
+			b[++w] = new BFint(m);
 		for(int i = 0; i < HASH_NUM; i++)
 		{
-			int z = bobhash[i]->run((char *)&x,4)&((1<<m)-1);
+			int z = bobhash[i]->run((char *)&x,4) & ((1<<m)-1);
 			if(!b[w]->c[z])
 			{
 				b[w]->num++;
-				b[w]->c[z]=1;
 			}
+			b[w]->c[z]+=1;
 		}
 	}
+
+	void insert(char *x)
+	{
+		bool f = false;
+		if(b[w]->num >= maxn)
+			b[++w] = new BFint(m);
+		for(int i = 0; i < HASH_NUM; i++)
+		{
+			int z = bobhash[i]->run(x,13) & ((1<<m)-1);
+			if(!b[w]->c[z])
+			{
+				b[w]->num++;
+			}
+			b[w]->c[z]+=1;
+		}
+	}
+
 	bool query(int x)
 	{
 		int *z = new int[HASH_NUM];
@@ -82,6 +99,86 @@ class DynamicBF
 		}
 		delete []z;
 		return false;
+	}
+	
+	bool query(char * x)
+	{
+		int *z = new int[HASH_NUM];
+		for(int j = 0; j < HASH_NUM; j++)
+			z[j] = bobhash[j]->run(x,13) & ((1<<m)-1);
+		for(int i = 0; i <= w;i++)
+		{
+			bool f=1;
+			for(int j = 0; j < HASH_NUM; j++)
+			{
+				if(!b[i]->c[z[j]])
+				{
+					f=0;
+					break;
+				}
+			}
+			if(f)
+			{
+				delete []z;
+				return true;
+			}
+		}
+		delete []z;
+		return false;
+	}
+
+	void deleteEle(int x) {
+		int cnt = 0;
+		int deletePos = -1;
+		int *z = new int[HASH_NUM];
+		for(int j = 0; j < HASH_NUM; j++)
+			z[j] = bobhash[j]->run((char *)&x,4) & ((1<<m)-1);
+		for(int i = 0; i <= w;i++) {
+			int f = 1;
+			for(int j = 0; j < HASH_NUM; j++) {
+				if(!b[i]->c[z[j]]) {
+					f=0;
+					break;
+				}
+			}
+			if (f) {
+				cnt += f;
+				deletePos = i;
+			}
+		}
+		if (cnt == 1) {
+			for (int j = 0; j < HASH_NUM; ++j) {
+				if (b[deletePos]->c[z[j]] > 0)
+					b[deletePos]->c[z[j]]--;
+			}
+		}
+	}
+
+	void deleteEle(char * x) {
+		int cnt = 0;
+		int deletePos = -1;
+		int *z = new int[HASH_NUM];
+		for(int j = 0; j < HASH_NUM; j++)
+			z[j] = bobhash[j]->run(x,13) & ((1<<m)-1);
+		for(int i = 0; i <= w;i++) {
+			int f = 1;
+			for(int j = 0; j < HASH_NUM; j++) {
+				if(!b[i]->c[z[j]]) {
+					f=0;
+					break;
+				}
+			}
+			if (f) {
+				cnt += f;
+				deletePos = i;
+			}
+		}
+		if (cnt == 1) {
+			for (int j = 0; j < HASH_NUM; ++j) {
+				if (b[deletePos]->c[z[j]] > 0)
+					b[deletePos]->c[z[j]]--;
+			}
+		}
 	}
 };
 

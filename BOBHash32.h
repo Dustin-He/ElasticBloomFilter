@@ -193,7 +193,6 @@ uint32_t BOBHash32::run(const char * str, uint32_t len)
 		//len = length;
 	a = b = 0x9e3779b9;  /* the golden ratio; an arbitrary value */
 	c = prime32[this->prime32Num];         /* the previous hash value */
-
 	/*---------------------------------------- handle most of the key */
 	while (len >= 12)
 	{
