@@ -7,12 +7,12 @@
 #include "bloom.h"
 #include "CBF.h"
 #include "DynamicBF.h"
+#include "parBF.h"
 #include "param.h"
 #include "ScalableBF.h"
 
 #define START_FILE_NO 1
 #define END_FILE_NO 1
-#define szVal 1 << 24
 #define SZLOG 20
 #define DataREP 32
 #define TraceSZVal (1 << SZLOG) * DataREP
@@ -27,19 +27,25 @@
 
 using namespace std;
 
-struct FIVE_TUPLE{char key[14];};
-uint32_t c[szVal];
+struct FIVE_TUPLE
+{
+	char key[14];
+};
+//typedef vector<FIVE_TUPLE> TRACE;
+//TRACE traces;
+FIVE_TUPLE traces[TraceSZVal];
+uint32_t trace_size = 0;
+uint32_t c[TraceSZVal];
 
 extern uint32_t total_slot;
 uint32_t experimentNo = 0;
 
-FIVE_TUPLE traces[szVal];
-uint32_t trace_size = 0;
-
-void ReadInTraces(const char *trace_prefix) {
+void ReadInTraces(const char *trace_prefix)
+{
 	FILE *funique = fopen(trace_prefix, "rb");
 
-	if (!funique) cout << "can not open the data file" << endl;
+	if (!funique)
+		cout << "can not open the data file" << endl;
 
 	FIVE_TUPLE tmp_five_tuple;
 	//traces.clear();
@@ -48,8 +54,10 @@ void ReadInTraces(const char *trace_prefix) {
 
 	int i = 0;
 
-	while(fread(tempstr, 1, 13, funique) == 13) {
-		if (i == szVal) break;
+	while (fread(tempstr, 1, 13, funique) == 13)
+	{
+		if (i == TraceSZVal)
+			break;
 		for (int i = 0; i < 13; i++)
 			//tmp_five_tuple.key[i] = tempstr[i];
 			traces[trace_size].key[i] = tempstr[i];
@@ -62,14 +70,17 @@ void ReadInTraces(const char *trace_prefix) {
 	printf("Successfully read in %s, %d packets\n\n", trace_prefix, trace_size);
 }
 
-inline void panic() {
+inline void panic()
+{
 	cout << "Usage: ./test [-h] [-e Experiment Number]\n";
 	exit(1);
 }
 
-inline void help() {
+inline void help()
+{
 	cout << "Usage: ./test [-h] [-e Experiment Number]\n";
-	cout << "-h help" << endl << "-e The experiment you want to run" << endl;
+	cout << "-h help" << endl
+		 << "-e The experiment you want to run" << endl;
 	cout << load_rate_one_layer << " To test the Load rate of the one-layer version." << endl;
 	cout << fp_while_expanding << " To test the false positive rate while expanding." << endl;
 	cout << false_positive << " To test the false positive rate." << endl;
@@ -79,23 +90,31 @@ inline void help() {
 }
 
 Ebloom_filter bf = Ebloom_filter(INI_BLOOM_SIZE, HASH_NUM);
-int main(int argc, char **argv) {
+
+int main(int argc, char **argv)
+{
 	expandOrNot = true;
-	int sz = szVal;
+	int sz = 1 << SZLOG;
 	int i;
 	int stash = 0;
 
-	if (argc < 2) {
+	if (argc < 2)
+	{
 		panic();
 	}
-	else {
-		for (int i = 1; i < argc; ++i) {
+	else
+	{
+		for (int i = 1; i < argc; ++i)
+		{
 			if (string(argv[i]) == "-h")
 				help();
-			else if (string(argv[i]) == "-e") {
-				if ((i + 1) < argc) {
+			else if (string(argv[i]) == "-e")
+			{
+				if ((i + 1) < argc)
+				{
 					experimentNo = atoi(argv[i + 1]);
-					if (experimentNo > mem_copy_test || !experimentNo) {
+					if (experimentNo > mem_copy_test || !experimentNo)
+					{
 						cout << "Wrong experiment number.\n";
 						exit(1);
 					}
@@ -107,108 +126,244 @@ int main(int argc, char **argv) {
 		}
 	}
 
-//	/* To read the string data */
-////
-////	/* This is used for insert the string data. */
-////	/* You also need to modify the type of the parameters of the isnert and query function */
-////	
-////	for (i = 0; i < traces[0].size(); ++i) {
-////		if (!bf.insert(traces[0][i].key)) {
-////			break;
-////		}
-////	}
-////	for (i = 0; i < traces[0].size(); ++i) {
-////		if (!bf.query(traces[0][i].key)) {
-////			break;
-////		}
-////	}
-//
-	/* To test the Load rate of the one-layer version. */
-	if (experimentNo == load_rate_one_layer) {
-		expandOrNot = false;
-		for (i = 0; i < sz; ++i) {
-			c[i] = i;
-		}
-		for(int i = 0; i < sz; i++)
-			swap(c[i], c[rand() % sz]);
-		cout << sz << endl;
-		for (int i = 0; i < sz; ++i) {
-			if (!bf.insert(c[i])) {
-				stash++;
-				if (stash > 16) {
-					cout << "Items: " << i << endl;
-					cout << "LoadRate: " << (double)(i) * HASH_NUM / (double)total_slot << endl;
-					break;
-				}
-			}
-		}
-		cout << "_1_rate: " << bf.get_1_num() / (double)bf.get_size() << endl;
-	}
-//
-	/* To test the false positive rate while expanding. */
-	if (experimentNo == fp_while_expanding) {
-		expandOrNot = false;
-		for (i = 0; i < sz; ++i) {
-			c[i] = i;
-		}
-		for(int i = 0; i < sz; i++)
-			swap(c[i], c[rand() % sz]);
-	
-		for (i = sz - 1; i >= 0; --i) {
-			if (!bf.insert(c[i])) {
-				cout << "Load Rate: " << sz - i << ' ' << (double)(sz - i) * HASH_NUM / (double)bf.size << endl;
-				break;
-			}
-			uint32_t cnt = 0;
-			if ((double)bf.get_1_num() / (double)bf.get_size() >= EXPAND_THRESHOLD) {
-				for (int j = sz + 1; j < sz * 10; ++j) {
-					if (bf.query(j))
-						cnt++;
-				}
-				cout << "False Positive: " << (double)cnt / (sz * 10 - sz -1) << endl;
-				cout << "Expand times: " << -bf.compression << endl;
-				bf.expand();
-			}
-		}
-	}
-	
+	/* To read the string data */
+
+	//const char *path = "./130000.dat";
+	const char *path = "130000.dat";
+	ReadInTraces(path);
+
+	//	/* This is used for insert the string data. */
+	//	/* You also need to modify the type of the parameters of the isnert and query function */
+	//
+	//	for (i = 0; i < traces[0].size(); ++i) {
+	//		if (!bf.insert(traces[0][i].key)) {
+	//			break;
+	//		}
+	//	}
+	//	for (i = 0; i < traces[0].size(); ++i) {
+	//		if (!bf.query(traces[0][i].key)) {
+	//			break;
+	//		}
+	//	}
+
 	/* To test the false positive rate. */
-	if (experimentNo == false_positive) {
-		for (i = 0; i < sz; ++i) {
-			c[i] = i;
-		}
-		for(int i = 0; i < sz; i++)
-			swap(c[i], c[rand() % sz]);
+	if (experimentNo == false_positive)
+	{
+		// 		sz = 1 << 20;
 
-	
-		for (i = sz - 1; i >= 0; --i) {
-			if (!bf.insert(c[i])) {
-				cout << "Load Rate: " << sz - i << ' ' << (double)(sz - i) * HASH_NUM / (double)total_slot << endl;
-				break;
-			}
-		}
-		uint32_t cnt = 0;
-		for (i = sz + 1; i < sz * 10; ++i) {
-			if (bf.query(i))
-				cnt++;
-		}
-		cout << "False Positive: " << (double)cnt / (sz * 10 - sz -1) << endl;
-		cout << "Expand times: " << -bf.compression << endl;
+		// 		for (i = 0; i < sz * datarep; ++i)
+		// 		{
+		// 			c[i] = i;
+		// 		}
+		// 		for (int i = 0; i < sz * datarep; i++)
+		// 			swap(c[i], c[rand() % (sz * datarep)]);
+
+		// 		// for (sz = (1 << 12); sz <= (1 << 20); sz <<= 2)
+		// 		{
+		// 			for (i = sz - 1; i >= 0; --i)
+		// 			{
+		// 				bf.insert(c[i]);
+		// 					// if (!bf.insert(c[i])) {
+		// 					// 	cout << "Load Rate: " << sz - i << ' ' << (double)(sz - i) * HASH_NUM / (double)total_slot << endl;
+		// 					// 	break;
+		// 					// }
+
+		// 				double cnt = 0,
+		// 						oldfpr = 1;
+		// 				if (((sz - i) % (1 << 10) == 0))
+		// 				{
+
+		// 					int t = log(sz - i) / log(2) + 1e-10;
+		// 					t = t - 2;
+		// 					if ((((sz - i) >> t) << t) != sz - i)
+		// 						continue;
+
+		// // #pragma omp parallel for schedule(guided) num_threads(THREAD_NUM)
+		// 					for (int i = sz + 1; i < sz * 10; ++i)
+		// 					{
+		// 						if (bf.query(c[i]))
+		// 						{
+		// // #pragma omp atomic
+		// 							cnt++;
+		// 						}
+		// 						if ((i & 0x3FFFF) == 0)
+		// 							if (fabs((double)cnt / (i - sz) - oldfpr) < 1e-2 * oldfpr )//&&oldfpr>1e2
+		// 								break;
+		// 							else
+		// 							{
+		// 								oldfpr = (double)cnt / (i - sz);
+		// 							}
+		// 					}
+		// 					// cout << <<"\t" << oldfpr << endl;
+		// 					printf("%.5lf\t%.10lf\n", double(sz - i) / (1 << 14), oldfpr);
+		// 				}
+		// 			}
+		// 		}
+
+		// 		// x^5*(x^)=0.2^5   e^(-INS*5/BF)=1-x
+		// 		// INS=-ln(1-x)*BF/5
+		// 		// MAX/(-ln(1-x)*BF/5)*x^5=0.2^5
+		// 		// x=(0.2^5*(BF)/(5*MAX))^(1/4)
+		// 		// DynamicBF dbf = DynamicBF(INI_BLOOM_SIZE, EXPAND_THRESHOLD);
+		// 		// x^4*num=0.2^4
+		// 		sz = 1 << 20;
+		// 		// DynamicBF dbf = DynamicBF(INI_BLOOM_SIZE, 0.1);
+		// 		DynamicBF dbf = DynamicBF(INI_BLOOM_SIZE, pow((pow(EXPAND_THRESHOLD,HASH_NUM)*(1<<INI_BLOOM_SIZE)/(HASH_NUM*sz)),(1./(HASH_NUM-1))));
+		// 		// cout<<"DBF_EXPAND_THRESHOLD: "<<pow((pow(EXPAND_THRESHOLD,HASH_NUM)*(1<<INI_BLOOM_SIZE)/(HASH_NUM*sz)),(1./(HASH_NUM-1)))<<endl;
+
+		// 		// for (sz = (1 << 12); sz <= (1 << 20); sz <<= 2)
+		// 		{
+		// 			for (i = sz - 1; i >= 0; --i)
+		// 			{
+		// 				dbf.insert(c[i]);
+		// 					// if (!dbf.insert(c[i])) {
+		// 					// 	cout << "Load Rate: " << sz - i << ' ' << (double)(sz - i) * HASH_NUM / (double)total_slot << endl;
+		// 					// 	break;
+		// 					// }
+
+		// 				double cnt = 0,
+		// 						oldfpr = 1;
+		// 				if (((sz - i) % (1 << 10) == 0))
+		// 				{
+
+		// 					int t = log(sz - i) / log(2) + 1e-10;
+		// 					t = t - 2;
+		// 					if ((((sz - i) >> t) << t) != sz - i)
+		// 						continue;
+
+		// // #pragma omp parallel for schedule(guided) num_threads(THREAD_NUM)
+		// 					for (int i = sz + 1; i < sz * 10; ++i)
+		// 					{
+		// 						if (dbf.query(c[i]))
+		// 						{
+		// // #pragma omp atomic
+		// 							cnt++;
+		// 						}
+		// 						if ((i & 0x3FFFF) == 0)
+		// 							if (fabs((double)cnt / (i - sz) - oldfpr) < 1e-2 * oldfpr )//&&oldfpr>1e2
+		// 								break;
+		// 							else
+		// 							{
+		// 								oldfpr = (double)cnt / (i - sz);
+		// 							}
+		// 					}
+		// 					// cout << <<"\t" << oldfpr << endl;
+		// 					printf("%.5lf\t%.10lf\n", double(sz - i) / (1 << 14), oldfpr);
+		// 				}
+		// 			}
+		// 		}
+		// 					cout<<"w"<<dbf.w<<endl;
+
+		// 		// x^5*(x^)=0.2^5   e^(-INS*5/BF)=1-x
+		// 		// INS=-ln(1-x)*BF/5
+		// 		// ln(MAX/(-ln(1-x)*BF/5))/ln(2)*x^5=0.2^5
+		// 		// 10*x^5=0.2^5
+		// 		// (ln(MAX)-ln(x)-ln(BF)+ln(5))*x^5=0.2^5*ln2
+		// 		// (ln(MAX)+4-ln(BF)+ln(5))*x^5=0.2^5*ln2
+		// 		// x=(0.2^5*(BF)/(5*MAX))^(1/4)
+		// 		// x^4*num=0.2^4
+		// 		sz = 1 << 20;
+		// 		// ScalableBF sbf = ScalableBF(INI_BLOOM_SIZE, EXPAND_THRESHOLD);
+		// 		ScalableBF sbf = ScalableBF(INI_BLOOM_SIZE, EXPAND_THRESHOLD/pow(10,1./HASH_NUM));
+		// 		sz = 1 << 20;
+
+		// 		// for (sz = (1 << 12); sz <= (1 << 20); sz <<= 2)
+		// 		{
+		// 			for (i = sz - 1; i >= 0; --i)
+		// 			{
+		// 				sbf.insert(c[i]);
+		// 					// if (!sbf.insert(c[i])) {
+		// 					// 	cout << "Load Rate: " << sz - i << ' ' << (double)(sz - i) * HASH_NUM / (double)total_slot << endl;
+		// 					// 	break;
+		// 					// }
+
+		// 				double cnt = 0,
+		// 						oldfpr = 1;
+		// 				if (((sz - i) % (1 << 10) == 0))
+		// 				{
+
+		// 					int t = log(sz - i) / log(2) + 1e-10;
+		// 					t = t - 2;
+		// 					if ((((sz - i) >> t) << t) != sz - i)
+		// 						continue;
+
+		// // #pragma omp parallel for schedule(guided) num_threads(THREAD_NUM)
+		// 					for (int i = sz + 1; i < sz * 10; ++i)
+		// 					{
+		// 						if (sbf.query(c[i]))
+		// 						{
+		// // #pragma omp atomic
+		// 							cnt++;
+		// 						}
+		// 						if ((i & 0x3FFFF) == 0)
+		// 							if (fabs((double)cnt / (i - sz) - oldfpr) < 1e-2 * oldfpr )//&&oldfpr>1e2
+		// 								break;
+		// 							else
+		// 							{
+		// 								oldfpr = (double)cnt / (i - sz);
+		// 							}
+		// 					}
+		// 					// cout << <<"\t" << oldfpr << endl;
+		// 					printf("%.5lf\t%.10lf\n", double(sz - i) / (1 << 14), oldfpr);
+		// 				}
+		// 			}
+		// 		}
+		// 					cout<<"w"<<sbf.w<<endl;
+
+		// 		sz = 1 << 20;
+		// 		{
+
+		// 			bf.clear();
+		// 			while (bf.sizelog > INI_BLOOM_SIZE)
+		// 				bf.compress();
+		// 			expandOrNot=0;
+		// 			for (i = sz - 1; i >= 0; --i)
+		// 			{
+		// 				bf.insert(c[i]);
+		// 					// if (!bf.insert(c[i])) {
+		// 					// 	cout << "Load Rate: " << sz - i << ' ' << (double)(sz - i) * HASH_NUM / (double)total_slot << endl;
+		// 					// 	break;
+		// 					// }
+
+		// 				double cnt = 0,
+		// 						oldfpr = 1;
+		// 				if (((sz - i) % (1 << 10) == 0))
+		// 				{
+
+		// 					int t = log(sz - i) / log(2) + 1e-10;
+		// 					t = t - 2;
+		// 					if ((((sz - i) >> t) << t) != sz - i)
+		// 						continue;
+
+		// // #pragma omp parallel for schedule(guided) num_threads(THREAD_NUM)
+		// 					for (int i = sz + 1; i < sz * 10; ++i)
+		// 					{
+		// 						if (bf.query(c[i]))
+		// 						{
+		// // #pragma omp atomic
+		// 							cnt++;
+		// 						}
+		// 						if ((i & 0x3FFFF) == 0)
+		// 							if (fabs((double)cnt / (i - sz) - oldfpr) < 1e-2 * oldfpr )//&&oldfpr>1e2
+		// 								break;
+		// 							else
+		// 							{
+		// 								oldfpr = (double)cnt / (i - sz);
+		// 							}
+		// 					}
+		// 					// cout << <<"\t" << oldfpr << endl;
+		// 					printf("%.5lf\t%.10lf\n", double(sz - i) / (1 << 14), oldfpr);
+		// 				}
+		// 			}
+		// 			bf.clear();
+		// 			while (bf.sizelog > INI_BLOOM_SIZE)
+		// 				bf.compress();
+		// 		}
 	}
-
-	/*for (i = 0; i < sz; ++i) {
-		int tmp = bf.insert(c[i]);
-		if (!tmp) {
-			printf("failed at i: %d\n", i);
-			break;
-		}
-		else if (tmp == -1) {
-			printf("expand at i: %d\n", i);
-		}
-	}*/
 
 	/* To test the insertion and query speed of EBF. */
-	if (experimentNo == speed_test) {
+	if (experimentNo == speed_test)
+	{
 		for (i = 0; i < sz; ++i)
 		{
 			c[i] = i;
@@ -725,132 +880,6 @@ for (sz = (1 << 16); sz <= (1 << 20); sz <<= 4)
 		// }
 
 		cout << cnttrue << endl;
-
-	}
-
-	/* To test the CBF. */
-	if (experimentNo == CBF_test) {
-		CBF cbf = CBF(CBF_SIZE, HASH_NUM);
-		ReadInTraces("./130000.dat");
-		expandOrNot = false;
-		uint32_t cnt = 0;
-		for (i = 0; i < (1 << 17); ++i) {
-			if (!cbf.insert(traces[i].key)) {
-				cout << "failed at i: " << i << endl;
-				break;
-			}
-			if ((double)cbf._1_num / (double)cbf.get_size() >= EXPAND_THRESHOLD) {
-				cout << (double)cbf._1_num / (double)cbf.get_size() << endl;
-				cbf.expand();
-				cnt++;
-				cout << "CBF Expand times: " << cnt << " " << i << endl;
-			}
-		}
-		//printf("percentage of 1: %lf\n", cbf._1_num / (double)(1 << CBF_SIZE));
-		cout << endl;		
-		for (i = 0; i < (1 << 17); ++i) {
-			if (!bf.insert(traces[i].key)) {
-				cout << "Load Rate: " << sz - i << ' ' << (double)(sz - i) * HASH_NUM / (double)bf.size << endl;
-				break;
-			}
-			if ((double)bf.get_1_num() / (double)bf.size >= EXPAND_THRESHOLD) {
-				cout << bf.get_1_num() / (double)bf.size << endl;
-				bf.expand();
-				cout << "Expand times: " << -bf.compression << " " << i << endl;
-			}
-		}
-	}
-
-	if (experimentNo == mem_copy_test) {
-		#define vol 30000
-		uint32_t sumtime = 0;
-		int times;
-		int tmp = 0;
-		uint32_t sz = 1 << 17;
-		uint16_t array1[sz][9];
-		uint16_t array2[sz][9];
-		uint32_t count = 0;
-		vector<BOBHash32 *> hash;
-		for (int i = 0; i < 3; ++i)
-			hash.push_back(new BOBHash32(i + 750));
-		ReadInTraces("./130000.dat");
-	  	//build
-		times = 20;
-		sumtime = 0;
-		while (times--) {
-			memset(array1, 0, sizeof(array1));
-			memset(array2, 0, sizeof(array2));
-			count = 0;
-			timespec time1, time2;
-			long long resns;
-			clock_gettime(CLOCK_MONOTONIC, &time1);
-			for (int i = 0; i < vol; ++i) {
-				for (int j = 0; j < 3; ++j) {
-					uint32_t hv = hash[j]->run(traces[i].key, KEY_LEN2);
-					uint32_t pos = hv % sz;
-					if (array1[pos][0] >= 8) {
-						cout << "wrong: " << (double)count / (1 << 17) << endl;
-						return 0;
-					}
-					else if (!array1[pos][0]) {
-						count++;
-					}
-					array1[pos][++array1[pos][0]] = hv / sz;
-				}
-			}
-			
-			clock_gettime(CLOCK_MONOTONIC, &time2);
-			resns = (long long)(time2.tv_sec - time1.tv_sec) * 1000000000LL + (time2.tv_nsec - time1.tv_nsec);
-			sumtime += resns;
-		}
-		cout << "1_rate: " << (double)count / (1 << 17) << endl;
-		cout << "Build time with an array of size " << sz * 8 << ": " << sumtime / 20 << endl;
-		//lazy update
-		sumtime = 0;
-		times = 20;
-		while (times--) {
-			timespec time1, time2;
-			long long resns;
-			clock_gettime(CLOCK_MONOTONIC, &time1);
-
-			memcpy(array2, array1, sizeof(array1));
-			
-			clock_gettime(CLOCK_MONOTONIC, &time2);
-			resns = (long long)(time2.tv_sec - time1.tv_sec) * 1000000000LL + (time2.tv_nsec - time1.tv_nsec);
-			sumtime += resns;
-		}
-		cout << "Lazy update time with an array of size " << sz * 8 << ": " << sumtime / 20 << endl;
-		//normal update
-		sumtime = 0;
-		times = 20;
-		while (times--) {
-			memset(array2, 0, sizeof(array2));
-			timespec time1, time2;
-			long long resns;
-			clock_gettime(CLOCK_MONOTONIC, &time1);
-			for (int i = 0; i < sz; ++i) {
-				uint32_t last_pos = 0;
-				uint32_t cnt = 0;
-				uint16_t ending = array1[i][0];
-				for (int j = 1; j <= ending; ++j) {
-					if (array1[i][j] % 2 == 1) {
-						array2[i][++array2[i][0]] = array1[i][j];
-						last_pos = j;
-						cnt++;
-					}
-					else if (last_pos){
-						array1[i][last_pos] = array1[i][j];
-						last_pos = j;
-					}
-				}
-				array1[i][0] -= cnt;
-			}
-			
-			clock_gettime(CLOCK_MONOTONIC, &time2);
-			resns = (long long)(time2.tv_sec - time1.tv_sec) * 1000000000LL + (time2.tv_nsec - time1.tv_nsec);
-			sumtime += resns;
-		}
-		cout << "Expand time with an array of size " << sz * 8 << ": " << sumtime / 20 << endl;
 	}
 
 	return 0;

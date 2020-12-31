@@ -15,7 +15,6 @@
 #include <immintrin.h>
 #include <cstdint>
 #include <bits/stdc++.h>
-#include <thread>
 #include "murmur3.h"
 
 #define FINGER_LENGTH finger_length
@@ -52,8 +51,8 @@ public:
 	Ebloom_filter(uint32_t size, int hash_num);
 	~Ebloom_filter();
 	void lazy_update(int layer, uint32_t bid);
-	bool insert(uint32_t key);
-	bool insert(char *key);
+	void insert(uint32_t key);
+	void insert(char *key);
 	void insert_with_duplicates(uint32_t key);
 	void insert_with_duplicates(char *key);
 	bool query(uint32_t key);
@@ -69,9 +68,7 @@ public:
 	double sumtime = 0;
 
 	// private:
-	alignas(64) uint16_t finger_buckets[1 << MAX_BLOOM_SIZE][BUCKET_SIZE]; //to simulate finger buckets in slow memory
-	alignas(64) uint8_t bucket_size[1 << MAX_BLOOM_SIZE];
-	alignas(64) uint8_t bucket_fplen[1 << MAX_BLOOM_SIZE];
+	alignas(64) uint16_t finger_buckets[1 << MAX_BLOOM_SIZE][BUCKET_SIZE + 2]; //to simulate finger buckets in slow memory
 
 	uint32_t size; //the length of the bit map
 	int sizelog;
@@ -91,40 +88,6 @@ public:
 	inline void setbit(uint32_t pos); //set a bit in the bit map
 	inline void resetbit(uint32_t pos);
 	void print();
-	
-	static void lazy_update_range(uint32_t bidl, uint32_t bidr, Ebloom_filter* ebf)
-	{
-		for (int bid = bidl; bid < bidr; bid++)
-		{
-
-			if (((ebf->bloom_arr[bid >> SHIFT] >> (bid & MASK)) & 1) && ebf->bucket_size[bid] && ebf->bucket_fplen[bid] > ebf->finger_length)
-			{
-
-				uint32_t bs = ebf->bucket_size[bid],
-						dlen = (ebf->bucket_fplen[bid] - ebf->finger_length),
-						t = (1 << dlen) - 1,
-						cnt = 0;
-
-				for (int j = 1; j <= bs; j++)
-					if ((ebf->finger_buckets[bid][j] & t) == (bid >> (ebf->sizelog - dlen)))
-						ebf->finger_buckets[bid][++cnt] = ebf->finger_buckets[bid][j] >> dlen;
-				ebf->bucket_size[bid] = cnt;
-				ebf->bucket_fplen[bid] = (cnt ? ebf->finger_length : 0);
-
-				if (!cnt)
-				{
-					ebf->bloom_arr[bid >> SHIFT] &= ~(1u << (bid & MASK));
-				}
-				else
-				{
-					ebf->bloom_arr[bid >> SHIFT] |= (1u << (bid & MASK));
-					if ((bid >> SAMPLEBITNUM) == 0)
-	#pragma opm atomic
-						ebf->_1_num++;
-				}
-			}
-		}
-	}
 };
 void Ebloom_filter::print()
 {
@@ -167,9 +130,7 @@ void Ebloom_filter::clear()
 {
 	_1_num = 0;
 	memset(bloom_arr, 0, size >> 3);
-	memset(&finger_buckets[0][0], 0, size * (BUCKET_SIZE) * sizeof(finger_buckets[0][0]));
-	memset(&bucket_size[0], 0, size * sizeof(bucket_size[0]));
-	memset(&bucket_fplen[0], 0, size * sizeof(bucket_fplen[0]));
+	memset(&finger_buckets[0][0], 0, size * (BUCKET_SIZE + 2) * sizeof(uint16_t));
 }
 
 /*to free a class*/
@@ -185,23 +146,25 @@ Ebloom_filter::~Ebloom_filter()
 }
 /*Insertion*/
 
-bool Ebloom_filter::insert(uint32_t key)
+void Ebloom_filter::insert(uint32_t key)
 {
 	for (int i = 0; i < HASH_NUM; ++i)
 	{
 		// uint32_t pos = HashFunList[i].run((const char *)&key, KEY_LEN);
 		uint32_t pos = MurmurHash3_x86_32(&key, KEY_LEN, i);
 		uint32_t bid = pos & POSMASK;
+		omp_set_lock(&(lock[pos & (LOCK_NUM - 1)]));
+
 		lazy_update(0, bid);
 
-		bucket_fplen[bid] = FINGER_LENGTH;
-		finger_buckets[bid][++bucket_size[bid]] = pos >> SIZELOG;
+		finger_buckets[bid][BUCKET_SIZE + 1] = FINGER_LENGTH;
+		finger_buckets[bid][++finger_buckets[bid][0]] = pos >> SIZELOG;
 
-		if (bucket_size[bid] == BUCKET_SIZE + 1)
+		if (finger_buckets[bid][0] == BUCKET_SIZE + 1)
 		{
-			bucket_size[bid]--;
+			finger_buckets[bid][0]--;
+			finger_buckets[bid][BUCKET_SIZE + 1] = FINGER_LENGTH;
 			cout << "bucket overflows";
-			return 0;
 		}
 		if ((bid >> SAMPLEBITNUM) == 0)
 			if (!((bloom_arr[bid >> SHIFT] >> (bid & MASK)) & 1))
@@ -213,16 +176,16 @@ bool Ebloom_filter::insert(uint32_t key)
 		omp_unset_lock(&(lock[pos & (LOCK_NUM - 1)]));
 
 		if (((pos & 0x3FF) == 0) && i == 0)
-			if (_1_num >= ExpandBitNum && expandOrNot)
-			{
-				expand();
-			}
+		if (_1_num >= ExpandBitNum && expandOrNot)
+		{
+			expand();
+		}
 	}
 
-	return 1;
+	return;
 }
 
-bool Ebloom_filter::insert(char *key)
+void Ebloom_filter::insert(char *key)
 {
 	for (int i = 0; i < HASH_NUM; ++i)
 	{
@@ -233,14 +196,14 @@ bool Ebloom_filter::insert(char *key)
 
 		lazy_update(0, bid);
 
-		bucket_fplen[bid] = FINGER_LENGTH;
-		finger_buckets[bid][++bucket_size[bid]] = pos >> SIZELOG;
+		finger_buckets[bid][BUCKET_SIZE + 1] = FINGER_LENGTH;
+		finger_buckets[bid][++finger_buckets[bid][0]] = pos >> SIZELOG;
 
-		if (bucket_size[bid] == BUCKET_SIZE + 1)
+		if (finger_buckets[bid][0] == BUCKET_SIZE + 1)
 		{
-			bucket_size[bid]--;
+			finger_buckets[bid][0]--;
+			finger_buckets[bid][BUCKET_SIZE + 1] = FINGER_LENGTH;
 			cout << "bucket overflows";
-			return 0;
 		}
 		if ((bid >> SAMPLEBITNUM) == 0)
 			if (!((bloom_arr[bid >> SHIFT] >> (bid & MASK)) & 1))
@@ -256,26 +219,25 @@ bool Ebloom_filter::insert(char *key)
 				expand();
 			}
 	}
-	return 1;
+	return;
 }
-
 
 inline void Ebloom_filter::lazy_update(const int layer, uint32_t bid)
 {
 
-	if (((bloom_arr[bid >> SHIFT] >> (bid & MASK)) & 1) && bucket_size[bid] && bucket_fplen[bid] > FINGER_LENGTH)
+	if (((bloom_arr[bid >> SHIFT] >> (bid & MASK)) & 1) && finger_buckets[bid][0] && finger_buckets[bid][BUCKET_SIZE + 1] > FINGER_LENGTH)
 	{
 
-		uint32_t bs = bucket_size[bid],
-				 dlen = (bucket_fplen[bid] - FINGER_LENGTH),
+		uint32_t bucket_size = finger_buckets[bid][0],
+				 dlen = (finger_buckets[bid][BUCKET_SIZE + 1] - FINGER_LENGTH),
 				 t = (1 << dlen) - 1,
 				 cnt = 0;
 
-		for (int j = 1; j <= bs; j++)
+		for (int j = 1; j <= bucket_size; j++)
 			if ((finger_buckets[bid][j] & t) == (bid >> (sizelog - dlen)))
 				finger_buckets[bid][++cnt] = finger_buckets[bid][j] >> dlen;
-		bucket_size[bid] = cnt;
-		bucket_fplen[bid] = (cnt ? FINGER_LENGTH : 0);
+		finger_buckets[bid][0] = cnt;
+		finger_buckets[bid][BUCKET_SIZE + 1] = (cnt ? FINGER_LENGTH : 0);
 
 		if (!cnt)
 		{
@@ -296,7 +258,7 @@ void Ebloom_filter::insert_with_duplicates(uint32_t key)
 	uint32_t pos[HASH_NUM];
 	for (int i = 0; i < HASH_NUM; ++i)
 		pos[i] = MurmurHash3_x86_32(&key, KEY_LEN, i);
-	// pos[i] = HashFunList[i].run((const char *)&key, KEY_LEN);
+		// pos[i] = HashFunList[i].run((const char *)&key, KEY_LEN);
 
 	bool inBF = 1;
 	for (int i = 0; i < HASH_NUM; ++i)
@@ -317,7 +279,7 @@ void Ebloom_filter::insert_with_duplicates(uint32_t key)
 	if (inBF == true)
 	{
 		int i;
-		for (i = min(32 / (32 - sizelog), HASH_NUM) - 1; i >= 0; --i)
+		for (i = min(32/(32-sizelog), HASH_NUM) - 1; i >= 0; --i)
 		{
 			uint32_t bid = pos[i] & POSMASK;
 			omp_set_lock(&(lock[bid & (LOCK_NUM - 1)]));
@@ -325,7 +287,7 @@ void Ebloom_filter::insert_with_duplicates(uint32_t key)
 			lazy_update(0, bid);
 
 			int j;
-			for (j = bucket_size[bid]; j >= 1; --j)
+			for (j = finger_buckets[bid][0]; j >= 1; --j)
 				if (finger_buckets[bid][j] == (pos[i] >> SIZELOG))
 					break;
 
@@ -345,12 +307,13 @@ void Ebloom_filter::insert_with_duplicates(uint32_t key)
 
 		lazy_update(0, bid);
 
-		bucket_fplen[bid] = FINGER_LENGTH;
-		finger_buckets[bid][++bucket_size[bid]] = pos[i] >> SIZELOG;
+		finger_buckets[bid][BUCKET_SIZE + 1] = FINGER_LENGTH;
+		finger_buckets[bid][++finger_buckets[bid][0]] = pos[i] >> SIZELOG;
 		//cout<<"INS "<<bid<<endl;
-		if (bucket_size[bid] == BUCKET_SIZE + 1)
+		if (finger_buckets[bid][0] == BUCKET_SIZE + 1)
 		{
-			bucket_size[bid]--;
+			finger_buckets[bid][0]--;
+			finger_buckets[bid][BUCKET_SIZE + 1] = FINGER_LENGTH;
 			cout << "bucket overflows";
 		}
 
@@ -371,23 +334,24 @@ void Ebloom_filter::insert_with_duplicates(uint32_t key)
 	return;
 }
 
+
 void Ebloom_filter::insert_with_duplicates(char *key)
 {
 	uint32_t pos[HASH_NUM];
 	for (int i = 0; i < HASH_NUM; ++i)
 		pos[i] = MurmurHash3_x86_32(key, KEY_LEN2, i);
-	// pos[i] = HashFunList[i].run((const char *)key, KEY_LEN2);
+		// pos[i] = HashFunList[i].run((const char *)key, KEY_LEN2);
 
 	bool inBF = 1;
 	for (int i = 0; i < HASH_NUM; ++i)
 	{
 		uint32_t bid = pos[i] & POSMASK;
 
-		// omp_set_lock(&(lock[bid & (LOCK_NUM - 1)]));
-		// lazy_update(0, bid);
+		omp_set_lock(&(lock[bid & (LOCK_NUM - 1)]));
+		lazy_update(0, bid);
 		bool s = (bloom_arr[bid >> SHIFT] >> (bid & MASK)) & 1;
 
-		// omp_unset_lock(&(lock[bid & (LOCK_NUM - 1)]));
+		omp_unset_lock(&(lock[bid & (LOCK_NUM - 1)]));
 		if (s == 0)
 		{
 			inBF = 0;
@@ -398,7 +362,7 @@ void Ebloom_filter::insert_with_duplicates(char *key)
 	if (inBF == true)
 	{
 		int i;
-		for (i = min(32 / (32 - sizelog), HASH_NUM) - 1; i >= 0; --i)
+		for (i = min(32/(32-sizelog), HASH_NUM) - 1; i >= 0; --i)
 		{
 			uint32_t bid = pos[i] & POSMASK;
 			omp_set_lock(&(lock[bid & (LOCK_NUM - 1)]));
@@ -406,7 +370,7 @@ void Ebloom_filter::insert_with_duplicates(char *key)
 			lazy_update(0, bid);
 
 			int j;
-			for (j = bucket_size[bid]; j >= 1; --j)
+			for (j = finger_buckets[bid][0]; j >= 1; --j)
 				if (finger_buckets[bid][j] == (pos[i] >> SIZELOG))
 					break;
 
@@ -426,12 +390,13 @@ void Ebloom_filter::insert_with_duplicates(char *key)
 
 		lazy_update(0, bid);
 
-		bucket_fplen[bid] = FINGER_LENGTH;
-		finger_buckets[bid][++bucket_size[bid]] = pos[i] >> SIZELOG;
+		finger_buckets[bid][BUCKET_SIZE + 1] = FINGER_LENGTH;
+		finger_buckets[bid][++finger_buckets[bid][0]] = pos[i] >> SIZELOG;
 		//cout<<"INS "<<bid<<endl;
-		if (bucket_size[bid] == BUCKET_SIZE + 1)
+		if (finger_buckets[bid][0] == BUCKET_SIZE + 1)
 		{
-			bucket_size[bid]--;
+			finger_buckets[bid][0]--;
+			finger_buckets[bid][BUCKET_SIZE + 1] = FINGER_LENGTH;
 			cout << "bucket overflows";
 		}
 
@@ -463,17 +428,17 @@ void Ebloom_filter::deleteEle(uint32_t key)
 		// omp_set_lock(&(lock[bid & (LOCK_NUM - 1)]));
 		lazy_update(0, bid);
 		int j;
-		for (j = bucket_size[bid]; j >= 1; --j)
+		for (j = finger_buckets[bid][0]; j >= 1; --j)
 			if (finger_buckets[bid][j] == (pos >> SIZELOG))
 			{
-				swap(finger_buckets[bid][j], finger_buckets[bid][bucket_size[bid]]);
-				bucket_size[bid]--;
+				swap(finger_buckets[bid][j], finger_buckets[bid][finger_buckets[bid][0]]);
+				finger_buckets[bid][0]--;
 				break;
 			}
 		// if (j == 0)
 		// 	printf("Deletion Error in bf!\n");
 		if (j != 0)
-			if (bucket_size[bid] == 0)
+			if (finger_buckets[bid][0] == 0)
 			{
 				if (((bloom_arr[bid >> SHIFT] >> (bid & MASK)) & 1) == 0)
 				{
@@ -502,17 +467,17 @@ void Ebloom_filter::deleteEle(char *key)
 		omp_set_lock(&(lock[bid & (LOCK_NUM - 1)]));
 		lazy_update(0, bid);
 		int j;
-		for (j = bucket_size[bid]; j >= 1; --j)
+		for (j = finger_buckets[bid][0]; j >= 1; --j)
 			if (finger_buckets[bid][j] == (pos >> SIZELOG))
 			{
-				swap(finger_buckets[bid][j], finger_buckets[bid][bucket_size[bid]]);
-				bucket_size[bid]--;
+				swap(finger_buckets[bid][j], finger_buckets[bid][finger_buckets[bid][0]]);
+				finger_buckets[bid][0]--;
 				break;
 			}
 		// if (j == 0)
 		// 	printf("Deletion Error in bf!\n");
 		if (j != 0)
-			if (bucket_size[bid] == 0)
+			if (finger_buckets[bid][0] == 0)
 			{
 				if (((bloom_arr[bid >> SHIFT] >> (bid & MASK)) & 1) == 0)
 				{
@@ -578,10 +543,11 @@ bool Ebloom_filter::query(char *key)
 	{
 		// uint32_t pos = HashFunList[i].run((const char *)key, KEY_LEN2);
 		uint32_t pos = MurmurHash3_x86_32(key, KEY_LEN2, i);
-		// omp_set_lock(&(lock[pos&(LOCK_NUM-1)]));
-		// lazy_update(0, pos & POSMASK);
-		// omp_unset_lock(&(lock[pos&(LOCK_NUM-1)]));
-		if (!((bloom_arr[(pos & POSMASK) >> SHIFT] >> (pos & MASK)) & 1))
+		omp_set_lock(&(lock[pos&(LOCK_NUM-1)]));
+		lazy_update(0, pos & POSMASK);
+		// if(!(bloom_arr[(pos & POSMASK) >> SHIFT] & (1 << (pos & MASK))))
+		omp_unset_lock(&(lock[pos&(LOCK_NUM-1)]));
+		if(!((bloom_arr[(pos & POSMASK) >> SHIFT] >> (pos & MASK))&1))
 			return false;
 	}
 	return true;
@@ -596,7 +562,7 @@ void Ebloom_filter::expand()
 			timespec dtime1, dtime2;
 			long long dresns;
 
-			double rens = 0;
+			double rens=0;
 			// cout << "EBF expansion." << endl;
 			// cout << "\t Bloom sizelog" << sizelog << "\t _1_num:" << _1_num << " \tExpandBitNum:" << ExpandBitNum << endl;
 
@@ -607,7 +573,7 @@ void Ebloom_filter::expand()
 			assert((MAX_SIZE - finger_length + 1) > MIN_SIZE && (finger_length - 1) > 0);
 
 			// #pragma omp parallel for schedule(guided) num_threads(THREAD_NUM)
-			rens -= omp_get_wtime();
+			rens-=omp_get_wtime();
 			for (int i = LOCK_NUM - 1; i >= 0; i--)
 				omp_set_lock(&(lock[i & (LOCK_NUM - 1)]));
 
@@ -618,9 +584,7 @@ void Ebloom_filter::expand()
 			char *new_arr = new char[(size << 1) >> 3];
 			memcpy(new_arr, bloom_arr, size >> 3);
 			memcpy(new_arr + (size >> 3), bloom_arr, size >> 3);
-			fastMemcpy(&finger_buckets[size][0], &finger_buckets[0][0], size * (BUCKET_SIZE) * sizeof(finger_buckets[0][0]));
-			fastMemcpy(&bucket_size[size], &bucket_size[0], size * sizeof(bucket_size[0]));
-			fastMemcpy(&bucket_fplen[size], &bucket_fplen[0], size * sizeof(bucket_fplen[0]));
+			fastMemcpy(&finger_buckets[size][0], &finger_buckets[0][0], size * (BUCKET_SIZE + 2) * sizeof(uint16_t));
 
 			/*reallocate the bit map*/
 			bloom_arr = new_arr;
@@ -636,33 +600,22 @@ void Ebloom_filter::expand()
 			posmask = (1 << sizelog) - 1;
 			ExpandBitNum = min(size, 1u << SAMPLEBITNUM) * EXPAND_THRESHOLD;
 
-			// for (int i = 0; i < min(size, 1u << SAMPLEBITNUM); i++)
-			// {
-			// 	lazy_update(0, i);
-			// }
-			// // cout << "expand end" << endl;
+			for (int i = 0; i < min(size, 1u << SAMPLEBITNUM); i++)
+			{
+				lazy_update(0, i);
+			}
+			// cout << "expand end" << endl;
+			for (int i = LOCK_NUM - 1; i >= 0; i--)
+				omp_unset_lock(&(lock[i & (LOCK_NUM - 1)]));
+
 
 			// for (int i = (1u << SAMPLEBITNUM); i < size; i++)
 			// {
-			// 	// if(((bloom_arr[i >> SHIFT] >> (i & MASK)) & 1)){
-			// 		// omp_set_lock(&(lock[i & (LOCK_NUM - 1)]));
-			// 		lazy_update(0, i);
-			// 		// omp_unset_lock(&(lock[i & (LOCK_NUM - 1)]));
-			// 	// }
+			// 	// omp_set_lock(&(lock[i & (LOCK_NUM - 1)]));
+			// 	lazy_update(0, i);
+			// 	// omp_unset_lock(&(lock[i & (LOCK_NUM - 1)]));
 			// }
-			thread *th[50];
-			for (int i = 0; i < THREAD_NUM; i++)
-			{
-				th[i] = new thread(lazy_update_range, size / THREAD_NUM * i, size / THREAD_NUM * (i + 1), this);
-			}
-			for (int i = 0; i < THREAD_NUM; i++)
-			{
-				th[i]->join();
-			}
-
-			for (int i = LOCK_NUM - 1; i >= 0; i--)
-				omp_unset_lock(&(lock[i & (LOCK_NUM - 1)]));
-			rens += omp_get_wtime();
+			rens+=omp_get_wtime();
 
 			clock_gettime(CLOCK_MONOTONIC, &dtime2);
 			dresns = (long long)(dtime2.tv_sec - dtime1.tv_sec) * 1000000000LL + (dtime2.tv_nsec - dtime1.tv_nsec);
@@ -670,6 +623,7 @@ void Ebloom_filter::expand()
 			// cout << "time1----------" << dth << endl;
 			// sumtime += dth;
 			sumtime += rens;
+
 
 			delete[] old_bloom_arr;
 
@@ -681,30 +635,30 @@ void Ebloom_filter::expand()
 			// 	// omp_set_lock(&(lock[i&(LOCK_NUM-1)]));
 
 			// 	//if(sizelog==22)//cout<<i<<endl;
-			// 	int BucketNum = finger_buckets[i]=;
+			// 	int BucketNum = finger_buckets[i][0];
 			// 	// if(sizelog==22)//cout<<i<<" "<<BucketNum<<endl;
-			// 	finger_buckets[i] = 0;
-			// 	finger_buckets[i + oldsize] = 0;
+			// 	finger_buckets[i][0] = 0;
+			// 	finger_buckets[i + oldsize][0] = 0;
 			// 	// if(sizelog==22)//cout<<i<<" "<<BucketNum<<endl;
 			// 	for (int j = 1; j <= BucketNum; j++){
 			// 		// if(i==2097105)
 			// 			// //cout<<j<<endl;
 			// 		if (finger_buckets[i][j] & 1)
 			// 		{
-			// 			finger_buckets[i + oldsize][++finger_buckets[i + oldsize]] = finger_buckets[i][j]>>1;
+			// 			finger_buckets[i + oldsize][++finger_buckets[i + oldsize][0]] = finger_buckets[i][j]>>1;
 			// 		}
 			// 		else
 			// 		{
-			// 			finger_buckets[i][++finger_buckets[i]] = finger_buckets[i][j]>>1;
+			// 			finger_buckets[i][++finger_buckets[i][0]] = finger_buckets[i][j]>>1;
 			// 		}
 			// 	}
-			// 	if (finger_buckets[i])
+			// 	if (finger_buckets[i][0])
 			// 	{
 			// 		bloom_arr[i >> SHIFT] |= (1 << (i & MASK));
 			// #pragma opm atomic// 		local
 			// _1_num++;
 			// // 	}
-			// // 	if (finger_buckets[i + oldsize])
+			// // 	if (finger_buckets[i + oldsize][0])
 			// // 	{
 			// // 		bloom_arr[(i  + oldsize) >> SHIFT] |= (1 << ((i  + oldsize) & MASK));
 			// #pragma opm atomic// 		local
@@ -754,23 +708,23 @@ void Ebloom_filter::compress()
 			_1_num = 0;
 			for (int pos = 0; pos < (size >> 1); pos++)
 			{
-				if (bucket_size[pos] + bucket_size[pos + (size >> 1)] > BUCKET_SIZE)
+				if (finger_buckets[pos][0] + finger_buckets[pos + (size >> 1)][0] > BUCKET_SIZE)
 				{
 					printf("Compression Error!\n");
 				}
-				for (int j = bucket_size[pos]; j >= 1; j--)
+				for (int j = finger_buckets[pos][0]; j >= 1; j--)
 					finger_buckets[pos][j] <<= 1;
-				for (int j = bucket_size[pos + (size >> 1)]; j >= 1; j--)
-					finger_buckets[pos][j + bucket_size[pos]] = (finger_buckets[pos + (size >> 1)][j] << 1) | 1;
-				bucket_size[pos] += bucket_size[pos + (size >> 1)];
-				if (bucket_size[pos])
+				for (int j = finger_buckets[pos + (size >> 1)][0]; j >= 1; j--)
+					finger_buckets[pos][j + finger_buckets[pos][0]] = (finger_buckets[pos + (size >> 1)][j] << 1) | 1;
+				finger_buckets[pos][0] += finger_buckets[pos + (size >> 1)][0];
+				if (finger_buckets[pos][0])
 				{
-					if (bucket_fplen[pos] == 0)
+					if (finger_buckets[pos][BUCKET_SIZE + 1] == 0)
 						cout << "ERROR3\n";
-					bucket_fplen[pos]++;
+					finger_buckets[pos][BUCKET_SIZE + 1]++;
 				}
 				if ((pos >> SAMPLEBITNUM) == 0)
-					if (bucket_size[pos])
+					if (finger_buckets[pos][0])
 					{
 						cout << pos << "AAAAAAAAAAAAAAAAA" << endl;
 #pragma opm atomic
@@ -800,13 +754,55 @@ void Ebloom_filter::compress()
 			delete[] old_bloom_arr;
 			for (int i = (1u << SAMPLEBITNUM); i < size; i++)
 			{
-				if (((bloom_arr[i >> SHIFT] >> (i & MASK)) & 1))
-				{
+				if(((bloom_arr[i >> SHIFT] >> (i & MASK)) & 1)){
 					// omp_set_lock(&(lock[i & (LOCK_NUM - 1)]));
 					lazy_update(0, i);
 					// omp_unset_lock(&(lock[i & (LOCK_NUM - 1)]));
 				}
 			}
+			// uint32_t local_1_num = 0;
+			// // #pragma omp parallel for schedule(guided) num_threads(THREAD_NUM)
+			// for (int i = oldsize - 1; i >= 0; i--)
+			// {
+			// 	// //cout<<i<<endl;
+			// 	// omp_set_lock(&(lock[i&(LOCK_NUM-1)]));
+
+			// 	//if(sizelog==22)//cout<<i<<endl;
+			// 	int BucketNum = finger_buckets[i][0];
+			// 	// if(sizelog==22)//cout<<i<<" "<<BucketNum<<endl;
+			// 	finger_buckets[i][0] = 0;
+			// 	finger_buckets[i + oldsize][0] = 0;
+			// 	// if(sizelog==22)//cout<<i<<" "<<BucketNum<<endl;
+			// 	for (int j = 1; j <= BucketNum; j++){
+			// 		// if(i==2097105)
+			// 			// //cout<<j<<endl;
+			// 		if (finger_buckets[i][j] & 1)
+			// 		{
+			// 			finger_buckets[i + oldsize][++finger_buckets[i + oldsize][0]] = finger_buckets[i][j]>>1;
+			// 		}
+			// 		else
+			// 		{
+			// 			finger_buckets[i][++finger_buckets[i][0]] = finger_buckets[i][j]>>1;
+			// 		}
+			// 	}
+			// 	if (finger_buckets[i][0])
+			// 	{
+			// 		bloom_arr[i >> SHIFT] |= (1 << (i & MASK));
+			// #pragma opm atomic// 		local
+			// _1_num++;
+			// // 	}
+			// // 	if (finger_buckets[i + oldsize][0])
+			// // 	{
+			// // 		bloom_arr[(i  + oldsize) >> SHIFT] |= (1 << ((i  + oldsize) & MASK));
+			// #pragma opm atomic// 		local
+			// _1_num++;
+			// 	}
+			// 	// omp_unset_lock(&(lock[i&(LOCK_NUM-1)]));
+			// }
+
+			// _1_num=local_1_num;
+			// // //cout<<"\t Bloom sizelog"<<sizelog<<endl;
+			// // #pragma omp parallel for schedule(guided) num_threads(THREAD_NUM)
 		}
 	}
 }
