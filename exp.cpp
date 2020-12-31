@@ -174,6 +174,7 @@ int main(int argc, char **argv) {
 	
 	/* To test the false positive rate. */
 	if (experimentNo == false_positive) {
+		sz /= 16;
 		for (i = 0; i < sz; ++i) {
 			c[i] = i;
 		}
